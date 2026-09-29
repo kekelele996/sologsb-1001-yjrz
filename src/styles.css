@@ -114,6 +114,27 @@ kbd { padding: 2px 5px; border: 1px solid #5a6981; border-radius: 4px; color: wh
 .snapshot-item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid #edf0f4; }
 .snapshot-item div { display: flex; flex-direction: column; gap: 3px; }
 .snapshot-item small, .snapshot-item span { color: #7b8799; font-size: 11px; }
+.batch-panel { display: flex; flex-direction: column; gap: 16px; max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+.batch-section { padding: 12px 14px; border: 1px solid #e0e7f0; border-radius: 10px; background: #f8fafc; }
+.batch-section h3 { margin: 0 0 11px; color: #2c3b54; font-size: 13px; }
+.batch-section.preview { background: #fff; }
+.batch-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.batch-filters .batch-field:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.batch-field { display: flex; flex-direction: column; gap: 5px; }
+.batch-field label { color: #647187; font-size: 11px; font-weight: 700; }
+.batch-field .el-select, .batch-field .el-input-number { width: 100%; }
+.batch-kind { margin-bottom: 12px; }
+.batch-fields { display: flex; flex-direction: column; gap: 10px; }
+.batch-term-mode { margin-bottom: 2px; }
+.batch-tip { margin: 4px 0 0; color: #7c8799; font-size: 11px; line-height: 1.55; }
+.batch-error { margin: 0; color: #c45656; font-size: 12px; }
+.batch-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.batch-locked { margin-top: 10px; }
+.batch-locked h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: #a93d3d; font-size: 12px; }
+.batch-locked ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; max-height: 170px; overflow-y: auto; }
+.batch-locked li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid #f1d4d4; border-radius: 7px; background: #fff7f7; }
+.batch-locked li code { color: #9a7a7a; font-size: 10px; }
+.batch-locked li em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7a5c5c; font-size: 11px; font-style: normal; }
 @media (max-width: 1380px) {
   .workspace { grid-template-columns: 224px minmax(580px, 1fr) 330px; }
   .shortcut-bar { left: 224px; right: 330px; }

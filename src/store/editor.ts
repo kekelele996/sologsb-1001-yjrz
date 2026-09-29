@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { Cue, EditorDocument, Locale, Snapshot } from '../types'
+import type { BatchChange, BatchCriteria, BatchPreview, Cue, CueStatus, EditorDocument, Locale, Snapshot } from '../types'
 import { loadDocument, saveDocument } from '../utils/db'
 import { makeId } from '../utils/id'
 import { parseScript, parseSrt, toSrt } from '../utils/subtitle'
@@ -11,6 +11,77 @@ let channel: BroadcastChannel | undefined
 
 const cloneCues = (cues: Cue[]): Cue[] => JSON.parse(JSON.stringify(cues)) as Cue[]
 const plainDocument = (document: EditorDocument): EditorDocument => JSON.parse(JSON.stringify(document)) as EditorDocument
+
+const STATUS_VALUES: CueStatus[] = ['draft', 'reviewed', 'issue']
+
+// Older stored documents may predate fields added later; fill defaults so they stay editable.
+const normalizeDocument = (document: EditorDocument): EditorDocument => ({
+  ...document,
+  actors: Array.isArray(document.actors) ? document.actors : [],
+  terms: Array.isArray(document.terms) ? document.terms : [],
+  snapshots: Array.isArray(document.snapshots) ? document.snapshots : [],
+  cues: Array.isArray(document.cues)
+    ? document.cues.map((cue) => ({
+      id: cue.id,
+      start: Number(cue.start) || 0,
+      end: Number(cue.end) || 0,
+      source: cue.source ?? '',
+      target: cue.target ?? '',
+      actorId: cue.actorId ?? '',
+      speed: typeof cue.speed === 'number' ? cue.speed : 1,
+      termIds: Array.isArray(cue.termIds) ? cue.termIds : [],
+      status: STATUS_VALUES.includes(cue.status) ? cue.status : 'draft',
+      locked: Boolean(cue.locked),
+    }))
+    : [],
+})
+
+const cueMatchesBatch = (cue: Cue, criteria: BatchCriteria): boolean => {
+  if (criteria.actorId !== 'all' && cue.actorId !== criteria.actorId) return false
+  if (criteria.statuses.length && !criteria.statuses.includes(cue.status)) return false
+  if (criteria.lockScope === 'locked' && !cue.locked) return false
+  if (criteria.lockScope === 'unlocked' && cue.locked) return false
+  return true
+}
+
+const batchPatchFor = (cue: Cue, change: BatchChange, terms: EditorDocument['terms']): Partial<Cue> | null => {
+  const patch: Partial<Cue> = {}
+  if (change.kind === 'actor') {
+    if (cue.actorId !== change.actorTargetId) patch.actorId = change.actorTargetId
+  } else if (change.kind === 'speed') {
+    if (typeof change.speed === 'number' && cue.speed !== change.speed) patch.speed = change.speed
+  } else {
+    const termId = change.termId
+    if (!termId) return null
+    const linked = cue.termIds.includes(termId)
+    if (change.termMode === 'add') {
+      if (!linked) patch.termIds = [...cue.termIds, termId]
+    } else if (change.termMode === 'remove') {
+      if (linked) patch.termIds = cue.termIds.filter((id) => id !== termId)
+    } else if (change.termTargetId) {
+      let next = cue.termIds.map((id) => (id === termId ? change.termTargetId! : id))
+      if (!next.includes(change.termTargetId)) next = [...next, change.termTargetId]
+      next = [...new Set(next)]
+      if (next.join('|') !== cue.termIds.join('|')) patch.termIds = next
+      if (change.replaceText) {
+        const from = terms.find((term) => term.id === termId)
+        const to = terms.find((term) => term.id === change.termTargetId)
+        if (from?.target && to?.target && cue.target.includes(from.target)) {
+          patch.target = cue.target.split(from.target).join(to.target)
+        }
+      }
+    }
+  }
+  return Object.keys(patch).length ? patch : null
+}
+
+const computeBatchPreview = (cues: Cue[], terms: EditorDocument['terms'], change: BatchChange): BatchPreview => {
+  const matched = cues.filter((cue) => cueMatchesBatch(cue, change))
+  const locked = matched.filter((cue) => cue.locked)
+  const editable = matched.filter((cue) => !cue.locked)
+  const changeCount = editable.filter((cue) => batchPatchFor(cue, change, terms) !== null).length
+  return { criteria: change, matched, editable, locked, changeCount }
+}
 
 const createDefaultDocument = (): EditorDocument => ({
   id: DOCUMENT_ID,
@@ -81,7 +152,7 @@ export const useEditorStore = defineStore('subtitle-editor', {
       this.online = navigator.onLine
       const stored = await loadDocument(DOCUMENT_ID)
       if (stored) {
-        this.document = stored
+        this.document = normalizeDocument(stored)
         this.lastSeenRevision = stored.revision
       } else {
         const saved = await saveDocument(plainDocument(this.document))
@@ -102,7 +173,7 @@ export const useEditorStore = defineStore('subtitle-editor', {
           }
           const latest = await loadDocument(DOCUMENT_ID)
           if (latest && latest.revision > this.lastSeenRevision) {
-            this.document = latest
+            this.document = normalizeDocument(latest)
             this.lastSeenRevision = latest.revision
             this.saveState = 'saved'
           }
@@ -189,7 +260,7 @@ export const useEditorStore = defineStore('subtitle-editor', {
     async loadLatest() {
       const latest = await loadDocument(DOCUMENT_ID)
       if (!latest) return
-      this.document = latest
+      this.document = normalizeDocument(latest)
       this.lastSeenRevision = latest.revision
       this.conflict = false
       this.saveState = 'saved'
@@ -283,6 +354,25 @@ export const useEditorStore = defineStore('subtitle-editor', {
         const index = cues.findIndex((item) => item.id === id)
         if (index >= 0) cues.splice(index, 1)
       }, this.document.cues[Math.max(0, this.document.cues.findIndex((item) => item.id === id) - 1)]?.id ?? null)
+    },
+    previewBatch(change: BatchChange): BatchPreview {
+      return computeBatchPreview(this.document.cues, this.document.terms, change)
+    },
+    applyBatchRevision(change: BatchChange): number {
+      const preview = computeBatchPreview(this.document.cues, this.document.terms, change)
+      if (!preview.changeCount) return 0
+      const editableIds = new Set(preview.editable.map((cue) => cue.id))
+      this.commit(`batch:${change.kind}`, (cues) => {
+        for (const cue of cues) {
+          if (!editableIds.has(cue.id)) continue
+          const patch = batchPatchFor(cue, change, this.document.terms)
+          if (!patch) continue
+          Object.assign(cue, patch)
+          // 受影响译文回到待校对，等待人工确认。
+          cue.status = 'draft'
+        }
+      })
+      return preview.changeCount
     },
     createSnapshot(name: string) {
       const snapshot: Snapshot = { id: makeId('snapshot'), name: name.trim() || `v${this.document.snapshots.length + 1}`, createdAt: Date.now(), cues: cloneCues(this.document.cues) }

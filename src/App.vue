@@ -3,11 +3,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Clock, Delete, DocumentCopy, Download, EditPen, Files, Lock, MagicStick, Monitor,
+  Clock, Delete, DocumentCopy, Download, EditPen, Files, Lock, MagicStick, Monitor, Operation,
   RefreshLeft, RefreshRight, Search, Unlock, UploadFilled,
 } from '@element-plus/icons-vue'
 import { useEditorStore } from './store/editor'
-import type { Cue, CueConflict } from './types'
+import type { BatchChange, BatchKind, Cue, CueConflict, CueStatus, LockScope, TermMode } from './types'
 import { formatTime } from './utils/subtitle'
 
 const store = useEditorStore()
@@ -16,6 +16,56 @@ const fileInput = ref<HTMLInputElement>()
 const snapshotDialog = ref(false)
 const snapshotName = ref('')
 const search = ref('')
+
+const batchDialog = ref(false)
+const batchKind = ref<BatchKind>('actor')
+const batchActorScope = ref('all')
+const batchActorTarget = ref('')
+const batchStatuses = ref<CueStatus[]>(['draft', 'reviewed', 'issue'])
+const batchLockScope = ref<LockScope>('unlocked')
+const batchSpeed = ref(1)
+const batchTermMode = ref<TermMode>('replace')
+const batchTermId = ref('')
+const batchTermTargetId = ref('')
+const batchReplaceText = ref(true)
+
+const batchChange = computed<BatchChange>(() => ({
+  kind: batchKind.value,
+  actorId: batchActorScope.value,
+  statuses: batchStatuses.value,
+  lockScope: batchLockScope.value,
+  actorTargetId: batchActorTarget.value || undefined,
+  speed: batchSpeed.value,
+  termMode: batchTermMode.value,
+  termId: batchTermId.value || undefined,
+  termTargetId: batchTermTargetId.value || undefined,
+  replaceText: batchReplaceText.value,
+}))
+const batchPreview = computed(() => store.previewBatch(batchChange.value))
+const batchError = computed(() => {
+  if (!batchStatuses.value.length) return store.t('batchStatusesEmpty')
+  if (batchKind.value === 'actor' && !batchActorTarget.value) return store.t('batchSelectActorTarget')
+  if (batchKind.value === 'term') {
+    if (!batchTermId.value) return store.t('batchSelectTerm')
+    if (batchTermMode.value === 'replace' && (!batchTermTargetId.value || batchTermTargetId.value === batchTermId.value)) {
+      return store.t('batchSelectTermTarget')
+    }
+  }
+  return ''
+})
+const canApplyBatch = computed(() => !batchError.value && batchPreview.value.changeCount > 0)
+
+function openBatch() {
+  if (!batchActorTarget.value && project.value.actors[0]) batchActorTarget.value = project.value.actors[0].id
+  batchDialog.value = true
+}
+function applyBatch() {
+  if (!canApplyBatch.value) return
+  const count = store.applyBatchRevision(batchChange.value)
+  if (!count) return
+  ElMessage.success(store.t('batchDone', { count }))
+  batchDialog.value = false
+}
 
 const filteredCues = computed(() => {
   const query = search.value.trim().toLowerCase()
@@ -146,6 +196,7 @@ const handleOffline = () => setOnline(false)
         <input ref="fileInput" class="file-input" type="file" accept=".srt,.txt,text/plain" @change="importFile" />
         <el-button :icon="UploadFilled" @click="fileInput?.click()">{{ store.t('import') }}</el-button>
         <el-button :icon="Download" @click="store.exportSrt">{{ store.t('export') }}</el-button>
+        <el-button :icon="Operation" @click="openBatch">{{ store.t('batchRevise') }}</el-button>
         <el-button type="primary" :icon="DocumentCopy" @click="snapshotDialog = true">{{ store.t('snapshot') }}</el-button>
       </div>
     </header>
@@ -328,6 +379,118 @@ const handleOffline = () => setOnline(false)
         <p v-if="!project.snapshots.length" class="empty-state">{{ store.t('noSnapshots') }}</p>
       </div>
       <template #footer><el-button type="primary" @click="createSnapshot">{{ store.t('snapshot') }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="batchDialog" :title="store.t('batchRevise')" width="620px">
+      <div class="batch-panel">
+        <section class="batch-section">
+          <h3>{{ store.t('batchScope') }}</h3>
+          <div class="batch-filters">
+            <div class="batch-field">
+              <label>{{ store.t('actor') }}</label>
+              <el-select v-model="batchActorScope">
+                <el-option :label="store.t('allActors')" value="all" />
+                <el-option v-for="actor in project.actors" :key="actor.id" :label="actor.name" :value="actor.id" />
+              </el-select>
+            </div>
+            <div class="batch-field">
+              <label>{{ store.t('batchStatus') }}</label>
+              <el-select v-model="batchStatuses" multiple collapse-tags :placeholder="store.t('batchStatusesEmpty')">
+                <el-option :label="store.t('draft')" value="draft" />
+                <el-option :label="store.t('reviewed')" value="reviewed" />
+                <el-option :label="store.t('issue')" value="issue" />
+              </el-select>
+            </div>
+            <div class="batch-field">
+              <label>{{ store.t('batchLock') }}</label>
+              <el-radio-group v-model="batchLockScope">
+                <el-radio-button value="unlocked">{{ store.t('lockUnlocked') }}</el-radio-button>
+                <el-radio-button value="locked">{{ store.t('lockLocked') }}</el-radio-button>
+                <el-radio-button value="any">{{ store.t('lockAny') }}</el-radio-button>
+              </el-radio-group>
+            </div>
+          </div>
+        </section>
+
+        <section class="batch-section">
+          <h3>{{ store.t('batchChange') }}</h3>
+          <el-radio-group v-model="batchKind" class="batch-kind">
+            <el-radio-button value="actor">{{ store.t('batchKindActor') }}</el-radio-button>
+            <el-radio-button value="speed">{{ store.t('batchKindSpeed') }}</el-radio-button>
+            <el-radio-button value="term">{{ store.t('batchKindTerm') }}</el-radio-button>
+          </el-radio-group>
+
+          <div v-if="batchKind === 'actor'" class="batch-fields">
+            <div class="batch-field">
+              <label>{{ store.t('batchReplaceTo') }}</label>
+              <el-select v-model="batchActorTarget">
+                <el-option v-for="actor in project.actors" :key="actor.id" :label="actor.name" :value="actor.id" />
+              </el-select>
+            </div>
+          </div>
+
+          <div v-else-if="batchKind === 'speed'" class="batch-fields">
+            <div class="batch-field">
+              <label>{{ store.t('batchNewSpeed') }}</label>
+              <el-input-number v-model="batchSpeed" :min="0.5" :max="1.8" :step="0.01" controls-position="right" />
+            </div>
+          </div>
+
+          <div v-else class="batch-fields">
+            <el-radio-group v-model="batchTermMode" class="batch-term-mode">
+              <el-radio value="add">{{ store.t('termModeAdd') }}</el-radio>
+              <el-radio value="remove">{{ store.t('termModeRemove') }}</el-radio>
+              <el-radio value="replace">{{ store.t('termModeReplace') }}</el-radio>
+            </el-radio-group>
+            <p class="batch-tip">
+              {{ batchTermMode === 'add' ? store.t('batchTermAddTip') : batchTermMode === 'remove' ? store.t('batchTermRemoveTip') : store.t('batchTermReplaceTip') }}
+            </p>
+            <div class="batch-filters">
+              <div class="batch-field">
+                <label>{{ store.t('batchTerm') }}</label>
+                <el-select v-model="batchTermId" clearable>
+                  <el-option v-for="term in project.terms" :key="term.id" :label="`${term.source} → ${term.target}`" :value="term.id" />
+                </el-select>
+              </div>
+              <div v-if="batchTermMode === 'replace'" class="batch-field">
+                <label>{{ store.t('batchReplaceTo') }}</label>
+                <el-select v-model="batchTermTargetId" clearable>
+                  <el-option v-for="term in project.terms.filter((item) => item.id !== batchTermId)" :key="term.id" :label="`${term.source} → ${term.target}`" :value="term.id" />
+                </el-select>
+              </div>
+            </div>
+            <el-checkbox v-if="batchTermMode === 'replace'" v-model="batchReplaceText">{{ store.t('termReplaceText') }}</el-checkbox>
+          </div>
+        </section>
+
+        <section class="batch-section preview">
+          <h3>{{ store.t('batchPreview') }}</h3>
+          <p v-if="batchError" class="batch-error">{{ batchError }}</p>
+          <template v-else>
+            <div class="batch-stats">
+              <el-tag type="info">{{ store.t('batchMatchedCount', { count: batchPreview.matched.length }) }}</el-tag>
+              <el-tag :type="batchPreview.changeCount ? 'warning' : 'info'">{{ store.t('batchChangeCount', { count: batchPreview.changeCount }) }}</el-tag>
+              <el-tag v-if="batchPreview.locked.length" type="danger">{{ store.t('batchLockedCount', { count: batchPreview.locked.length }) }}</el-tag>
+            </div>
+            <p v-if="!batchPreview.changeCount" class="batch-tip">{{ store.t('batchNoChange') }}</p>
+            <div v-if="batchPreview.locked.length" class="batch-locked">
+              <h4><el-icon><Lock /></el-icon>{{ store.t('batchLockedLines') }}</h4>
+              <ul>
+                <li v-for="cue in batchPreview.locked" :key="cue.id">
+                  <span class="actor-pill" :style="{ '--actor': actorColor(cue.actorId) }">{{ actorName(cue.actorId) }}</span>
+                  <code>{{ formatTime(cue.start) }}</code>
+                  <em>{{ cue.target || cue.source }}</em>
+                </li>
+              </ul>
+            </div>
+            <p class="batch-tip">{{ store.t('batchLockSkipTip') }}</p>
+          </template>
+        </section>
+      </div>
+      <template #footer>
+        <el-button @click="batchDialog = false">{{ store.t('cancel') }}</el-button>
+        <el-button type="primary" :disabled="!canApplyBatch" @click="applyBatch">{{ store.t('batchApply') }}</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
