@@ -114,6 +114,30 @@ kbd { padding: 2px 5px; border: 1px solid #5a6981; border-radius: 4px; color: wh
 .snapshot-item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid #edf0f4; }
 .snapshot-item div { display: flex; flex-direction: column; gap: 3px; }
 .snapshot-item small, .snapshot-item span { color: #7b8799; font-size: 11px; }
+.batch-form { display: flex; flex-direction: column; gap: 16px; }
+.batch-section { padding: 12px 14px; border: 1px solid #e0e7f0; border-radius: 10px; background: #f8fafc; }
+.batch-section h3 { margin: 0 0 10px; color: #33425a; font-size: 13px; }
+.batch-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 10px; margin-top: 10px; }
+.batch-row > label { color: #647187; font-size: 12px; font-weight: 700; }
+.batch-row .el-select, .batch-row .el-input-number { width: 100%; }
+.batch-field-switch { width: 100%; }
+.batch-field-switch .el-radio-button { width: 33.33%; }
+.batch-field-switch .el-radio-button .el-radio-button__inner { width: 100%; }
+.batch-preview-section { background: #fff; }
+.batch-count { display: flex; align-items: center; gap: 7px; margin: 6px 0; color: #50617a; font-size: 12px; }
+.batch-count small { display: block; color: #9aa6b8; font-size: 11px; }
+.batch-count.change { color: #2f6fed; }
+.batch-count.locked { align-items: flex-start; color: #b36b00; }
+.batch-preview-list { margin-top: 10px; }
+.batch-preview-list h4 { display: flex; align-items: center; gap: 6px; margin: 8px 0; color: #34435b; font-size: 12px; }
+.batch-preview-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 4px; border-bottom: 1px solid #edf1f6; }
+.batch-preview-index { color: #8793a7; font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
+.batch-preview-text { min-width: 0; }
+.batch-preview-text b { display: block; color: #2f6fed; font-size: 12px; font-weight: 600; }
+.batch-preview-text small { display: block; overflow: hidden; color: #7b8799; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.locked-list .batch-preview-text b { color: #b36b00; }
+.batch-more { margin: 6px 0 0; color: #8793a7; font-size: 11px; text-align: center; }
+.batch-empty { margin: 8px 0 0; color: #8793a5; font-size: 12px; text-align: center; }
 @media (max-width: 1380px) {
   .workspace { grid-template-columns: 224px minmax(580px, 1fr) 330px; }
   .shortcut-bar { left: 224px; right: 330px; }

@@ -59,3 +59,25 @@ export interface HistoryEntry {
   cues: Cue[]
   selectedCueId: string | null
 }
+
+export type BatchLockFilter = 'all' | 'unlocked' | 'locked'
+export type BatchField = 'actor' | 'speed' | 'term'
+export type BatchTermMode = 'replace' | 'add'
+
+export interface BatchPlan {
+  actorId: string
+  statuses: CueStatus[]
+  lockFilter: BatchLockFilter
+  field: BatchField
+  nextActorId?: string
+  speed?: number
+  termMode: BatchTermMode
+  sourceTermId?: string
+  targetTermId?: string
+}
+
+export interface BatchPreview {
+  matched: Cue[]
+  changed: Cue[]
+  lockedSkipped: Cue[]
+}

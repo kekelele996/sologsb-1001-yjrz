@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { Cue, EditorDocument, Locale, Snapshot } from '../types'
+import type { BatchPlan, BatchPreview, Cue, CueStatus, EditorDocument, Locale, Snapshot } from '../types'
 import { loadDocument, saveDocument } from '../utils/db'
 import { makeId } from '../utils/id'
 import { parseScript, parseSrt, toSrt } from '../utils/subtitle'
@@ -11,6 +11,30 @@ let channel: BroadcastChannel | undefined
 
 const cloneCues = (cues: Cue[]): Cue[] => JSON.parse(JSON.stringify(cues)) as Cue[]
 const plainDocument = (document: EditorDocument): EditorDocument => JSON.parse(JSON.stringify(document)) as EditorDocument
+
+// 返回批量修订对单条台词的补丁；锁定台词或实际无变化时返回 null，保证锁定内容原样保留。
+const batchPatchFor = (cue: Cue, plan: BatchPlan): Partial<Cue> | null => {
+  if (cue.locked) return null
+  if (plan.field === 'actor') {
+    if (!plan.nextActorId || plan.nextActorId === cue.actorId) return null
+    return { actorId: plan.nextActorId }
+  }
+  if (plan.field === 'speed') {
+    if (plan.speed === undefined || cue.speed === plan.speed) return null
+    return { speed: plan.speed }
+  }
+  const targetTermId = plan.targetTermId
+  if (!targetTermId) return null
+  if (plan.termMode === 'add') {
+    if (cue.termIds.includes(targetTermId)) return null
+    return { termIds: [...cue.termIds, targetTermId] }
+  }
+  const sourceTermId = plan.sourceTermId
+  if (!sourceTermId || sourceTermId === targetTermId || !cue.termIds.includes(sourceTermId)) return null
+  const termIds = [...new Set(cue.termIds.map((id) => (id === sourceTermId ? targetTermId : id)))]
+  if (termIds.length === cue.termIds.length && termIds.every((id, index) => id === cue.termIds[index])) return null
+  return { termIds }
+}
 
 const createDefaultDocument = (): EditorDocument => ({
   id: DOCUMENT_ID,
@@ -223,6 +247,34 @@ export const useEditorStore = defineStore('subtitle-editor', {
     },
     toggleLock(id: string) {
       this.updateCue(id, { locked: !this.document.cues.find((cue) => cue.id === id)?.locked }, 'toggle-lock')
+    },
+    previewBatch(plan: BatchPlan): BatchPreview {
+      const matched = this.document.cues.filter((cue) => {
+        if (plan.actorId !== 'all' && cue.actorId !== plan.actorId) return false
+        if (!plan.statuses.includes(cue.status)) return false
+        if (plan.lockFilter === 'unlocked' && cue.locked) return false
+        if (plan.lockFilter === 'locked' && !cue.locked) return false
+        return true
+      })
+      const changed = matched.filter((cue) => !cue.locked && batchPatchFor(cue, plan) !== null)
+      const lockedSkipped = matched.filter((cue) => cue.locked)
+      return { matched, changed, lockedSkipped }
+    },
+    applyBatch(plan: BatchPlan): number {
+      const preview = this.previewBatch(plan)
+      if (!preview.changed.length) return 0
+      const changeLabels: Record<BatchPlan['field'], string> = { actor: 'batch-actor', speed: 'batch-speed', term: 'batch-term' }
+      this.commit(`batch:${changeLabels[plan.field]}`, (cues) => {
+        for (const cue of cues) {
+          if (!preview.changed.some((item) => item.id === cue.id)) continue
+          const patch = batchPatchFor(cue, plan)
+          if (!patch) continue
+          Object.assign(cue, patch)
+          // 受影响译文统一回到待校对，等待重新确认
+          cue.status = 'draft'
+        }
+      })
+      return preview.changed.length
     },
     splitCue(id: string) {
       const source = this.document.cues.find((cue) => cue.id === id)
